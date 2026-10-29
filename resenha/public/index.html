@@ -100,7 +100,7 @@ a.file{display:inline-block;margin-top:4px;background:var(--raise);padding:6px 1
 <div id="login">
   <form id="loginForm">
     <h1>7M Hub</h1>
-    <p>Call e transmissão de tela pros cria. escolhe um nome ai.</p>
+    <p>Call e transmissão de tela para a turma. Escolha um nome e entre.</p>
     <label id="avatarPick" title="Escolher foto"><img id="avatarImg" alt=""><span>Sua foto</span><input id="avatarFile" type="file" accept="image/*" hidden></label>
     <input id="nameInput" placeholder="Seu nome" maxlength="24" required autofocus>
     <button class="primary">Entrar</button>
@@ -109,16 +109,17 @@ a.file{display:inline-block;margin-top:4px;background:var(--raise);padding:6px 1
 
 <div id="app">
   <aside>
-    <h2>Chats</h2>
+    <h2>Canais de texto</h2>
     <div id="texts"></div>
     <h2>Canais de voz</h2>
     <div id="channels"></div>
   </aside>
 
   <main>
-    <div id="stage"><p id="empty">Tem ninguem aqui só tu.</p></div>
+    <div id="stage"><p id="empty">Você está sozinho aqui. Chame alguém para o mesmo canal ou comece a transmitir sua tela.</p></div>
     <div id="bar">
       <button id="btnMic">Microfone</button>
+      <button id="btnNoise">Ruído</button>
       <button id="btnDeaf">Áudio</button>
       <button id="btnShare">Compartilhar tela</button>
       <label class="chk"><input type="checkbox" id="shareAudio" checked> Incluir som</label>
@@ -135,10 +136,12 @@ a.file{display:inline-block;margin-top:4px;background:var(--raise);padding:6px 1
 <div id="toast" role="alert"></div>
 
 <script>
-const CHANNELS = ['Canal', 'Canal-2', 'Canal-3', 'Canal-4'];
+const CHANNELS = ['Geral', 'Jogos', 'Filmes', 'Estudo'];
 const ICE = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }] };
 
 const $ = (id) => document.getElementById(id);
+// O app de desktop (Electron) ainda não consegue capturar o som só de uma janela.
+const IN_APP = navigator.userAgent.includes('Electron');
 let ws, myId, myName, room = null;
 let micStream = null, screenStream = null;
 let muted = false, deafened = false;
@@ -161,9 +164,13 @@ $('loginForm').onsubmit = async (e) => {
   try {
     micStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
   } catch { toast('Sem acesso ao microfone. Você vai só ouvir.'); }
-  connect();
+  applyNoise(); connect();
 };
 $('nameInput').value = localStorage.getItem('resenha:nome') || '';
+if (IN_APP && !window.hubAudio) {
+  $('shareAudio').checked = false; $('shareAudio').disabled = true;
+  $('shareAudio').parentElement.lastChild.textContent = ' Som (atualize o app)';
+}
 let myAvatar = localStorage.getItem('resenha:avatar') || '';
 function showAvatar() {
   if (myAvatar) $('avatarImg').src = myAvatar; else $('avatarImg').removeAttribute('src');
@@ -318,6 +325,45 @@ function sfx(kind) {
     }
   } catch {}
 }
+/* Som da transmissão no app: o Windows entrega o som do programa (ou da tela, sem o 7M Hub)
+   e aqui ele vira uma faixa de áudio para ir junto com a imagem. */
+function toStereoFloat(u8, meta) {
+  const raw = u8.slice().buffer; // cópia alinhada
+  let src;
+  if (meta.isFloat && meta.bitsPerSample === 32) src = new Float32Array(raw);
+  else if (!meta.isFloat && meta.bitsPerSample === 16) src = Float32Array.from(new Int16Array(raw), (v) => v / 32768);
+  else if (!meta.isFloat && meta.bitsPerSample === 32) src = Float32Array.from(new Int32Array(raw), (v) => v / 2147483648);
+  else return null;
+  const ch = meta.channels || 2;
+  if (ch === 2) return src;
+  const out = new Float32Array((src.length / ch) * 2);
+  for (let i = 0, j = 0; i < src.length; i += ch) { out[j++] = src[i]; out[j++] = src[ch > 1 ? i + 1 : i]; }
+  return out;
+}
+async function startAppAudio() {
+  try {
+    const ctx = new AudioContext({ sampleRate: 48000 });
+    const code = `class P extends AudioWorkletProcessor {
+      constructor() { super(); this.q = []; this.cur = null; this.pos = 0;
+        this.port.onmessage = (e) => { this.q.push(e.data); if (this.q.length > 60) this.q.splice(0, this.q.length - 20); }; }
+      process(_i, outputs) {
+        const L = outputs[0][0], R = outputs[0][1] || outputs[0][0];
+        for (let i = 0; i < L.length; i++) {
+          if (!this.cur || this.pos >= this.cur.length) { this.cur = this.q.shift() || null; this.pos = 0; }
+          if (!this.cur) { L[i] = 0; R[i] = 0; continue; }
+          L[i] = this.cur[this.pos++]; R[i] = this.cur[this.pos++];
+        }
+        return true;
+      } }
+      registerProcessor('pcm-player', P);`;
+    await ctx.audioWorklet.addModule(URL.createObjectURL(new Blob([code], { type: 'text/javascript' })));
+    const node = new AudioWorkletNode(ctx, 'pcm-player', { numberOfInputs: 0, outputChannelCount: [2] });
+    const dest = ctx.createMediaStreamDestination(); node.connect(dest);
+    hubAudio.onChunk((u8, meta) => { try { const f = toStereoFloat(u8, meta); if (f) node.port.postMessage(f, [f.buffer]); } catch {} });
+    hubAudio.onStatus((m) => toast('Transmitindo sem som: ' + m));
+    return { track: dest.stream.getAudioTracks()[0], close: () => { hubAudio.stop(); hubAudio.onChunk(null); ctx.close(); } };
+  } catch { toast('Não consegui preparar o som da transmissão.'); return null; }
+}
 function controls(tile, onVol) {
   const c = document.createElement('div'); c.className = 'ctl';
   if (onVol) {
@@ -376,6 +422,15 @@ function watchSpeaking(p, stream, isMe) {
 }
 
 /* ---------- controles ---------- */
+let noiseOn = localStorage.getItem('resenha:ruido') !== '0';
+async function applyNoise() {
+  $('btnNoise').textContent = noiseOn ? 'Ruído: cancelado' : 'Ruído: normal';
+  $('btnNoise').classList.toggle('live', noiseOn);
+  try {
+    await micStream?.getAudioTracks()[0]?.applyConstraints({ noiseSuppression: noiseOn, echoCancellation: true, autoGainControl: true, voiceIsolation: noiseOn });
+  } catch {}
+}
+$('btnNoise').onclick = () => { noiseOn = !noiseOn; localStorage.setItem('resenha:ruido', noiseOn ? '1' : '0'); applyNoise(); };
 $('btnMic').onclick = () => {
   if (!micStream) return toast('Microfone indisponível.');
   muted = !muted; micStream.getAudioTracks().forEach((t) => (t.enabled = !muted));
@@ -391,10 +446,16 @@ $('btnLeave').onclick = () => { ws.onclose = null; ws.close(); stopShare(); micS
 $('btnShare').onclick = async () => {
   if (screenStream) return stopShare();
   if (!navigator.mediaDevices?.getDisplayMedia) return toast('Seu navegador não permite compartilhar tela (precisa de HTTPS).');
+  let appAudio = null;
   try {
+    const wantAudio = $('shareAudio').checked && !$('shareAudio').disabled;
+    if (IN_APP && window.hubAudio) { hubAudio.setWant(wantAudio); if (wantAudio) appAudio = await startAppAudio(); }
+    // Janela: só o som daquela janela. Tela inteira: som do computador.
     screenStream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 30 },
-      audio: $('shareAudio').checked && { echoCancellation: true, noiseSuppression: false, autoGainControl: false, restrictOwnAudio: true } });
-  } catch { return; }
+      audio: !IN_APP && wantAudio && { echoCancellation: true, noiseSuppression: false, autoGainControl: false, restrictOwnAudio: true },
+      windowAudio: 'window', systemAudio: 'include' });
+  } catch { appAudio?.close(); return; }
+  if (appAudio) { screenStream.addTrack(appAudio.track); screenStream.appAudio = appAudio; }
   screenStream.getVideoTracks()[0].onended = stopShare;
   peers.forEach(addScreenTo);
   const tile = document.createElement('div'); tile.className = 'tile'; tile.id = 'localShare';
@@ -406,6 +467,7 @@ $('btnShare').onclick = async () => {
 function addScreenTo(p) { p.screenSenders = screenStream.getTracks().map((t) => p.pc.addTrack(t, screenStream)); }
 function stopShare() {
   if (!screenStream) return;
+  screenStream.appAudio?.close();
   screenStream.getTracks().forEach((t) => t.stop());
   peers.forEach((p) => { p.screenSenders.forEach((s) => { try { p.pc.removeTrack(s); } catch {} }); p.screenSenders = []; });
   screenStream = null; $('localShare')?.remove();
