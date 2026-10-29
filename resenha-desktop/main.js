@@ -1,7 +1,47 @@
-// Janela do app: abre o seu servidor 7M Hub e cuida do seletor de tela.
-const { app, BrowserWindow, session, desktopCapturer, Menu, shell } = require('electron');
+// Janela do app: abre o seu servidor 7M Hub, cuida do seletor de tela
+// e captura o som só do programa transmitido (Windows).
+const { app, BrowserWindow, session, desktopCapturer, Menu, shell, ipcMain } = require('electron');
 const fs = require('fs');
 const path = require('path');
+
+// Módulo nativo de som por programa. Se não carregar, a transmissão segue sem som.
+let capture = null;
+try {
+  capture = require('electron-native-screenshare');
+  if (!capture.isAvailable()) capture = null;
+} catch { capture = null; }
+
+let wantAudio = false, capturing = false;
+ipcMain.on('audio-want', (_e, v) => { wantAudio = !!v; });
+ipcMain.on('audio-stop', () => stopAudio());
+
+function stopAudio() {
+  if (!capturing) return;
+  try { capture.stopCapture(); } catch {}
+  capturing = false;
+}
+
+function startAudio(win, src) {
+  stopAudio();
+  if (!wantAudio) return;
+  const status = (m) => !win.isDestroyed() && win.webContents.send('audio-status', m);
+  if (process.platform !== 'win32' || !capture) return status('módulo de som não carregou');
+  try {
+    const onData = (buf, meta) => { if (!win.isDestroyed()) win.webContents.send('audio-chunk', buf, meta); };
+    let ok;
+    if (src.id.startsWith('window:')) {
+      // Janela: só o som do programa dono da janela.
+      const pid = capture.getPidFromWindowHandle(parseInt(src.id.split(':')[1], 10));
+      if (!pid) return status('não achei o programa da janela');
+      ok = capture.startCapture(pid, true, onData);
+    } else {
+      // Tela inteira: som de tudo, menos do próprio 7M Hub (evita o eco).
+      ok = capture.startCapture(process.pid, false, onData);
+    }
+    capturing = !!ok;
+    if (!ok) status('não consegui iniciar');
+  } catch (e) { status(String(e.message || e).slice(0, 80)); }
+}
 
 function getUrl() {
   if (process.env.RESENHA_URL) return process.env.RESENHA_URL;
@@ -15,13 +55,15 @@ function createWindow() {
     width: 1280, height: 800, minWidth: 800, minHeight: 560,
     backgroundColor: '#14161f', title: '7M Hub', autoHideMenuBar: true,
     icon: path.join(__dirname, 'icon.png'),
+    webPreferences: { preload: path.join(__dirname, 'preload.js') },
   });
 
   // Libera microfone para o app.
   session.defaultSession.setPermissionRequestHandler((_wc, permission, cb) => cb(['media', 'fullscreen'].includes(permission)));
 
   // Seletor de tela/janela quando você clica em "Compartilhar tela".
-  session.defaultSession.setDisplayMediaRequestHandler(async (request, callback) => {
+  // O som não vem daqui: vem do módulo nativo (startAudio).
+  session.defaultSession.setDisplayMediaRequestHandler(async (_request, callback) => {
     const sources = await desktopCapturer.getSources({ types: ['screen', 'window'] });
     let chosen = false;
     const menu = Menu.buildFromTemplate([
@@ -29,7 +71,7 @@ function createWindow() {
       { type: 'separator' },
       ...sources.map((src) => ({
         label: (src.id.startsWith('screen') ? 'Tela: ' : 'Janela: ') + src.name.slice(0, 60),
-        click: () => { chosen = true; callback({ video: src, audio: request.audioRequested && process.platform === 'win32' ? 'loopback' : undefined }); },
+        click: () => { chosen = true; startAudio(win, src); callback({ video: src }); },
       })),
     ]);
     menu.popup({ window: win, callback: () => { if (!chosen) callback({}); } });
@@ -50,4 +92,5 @@ function createWindow() {
 }
 
 app.whenReady().then(createWindow);
+app.on('before-quit', stopAudio);
 app.on('window-all-closed', () => app.quit());
