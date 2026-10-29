@@ -21,7 +21,7 @@ function createWindow() {
   session.defaultSession.setPermissionRequestHandler((_wc, permission, cb) => cb(['media', 'fullscreen'].includes(permission)));
 
   // Seletor de tela/janela quando você clica em "Compartilhar tela".
-  session.defaultSession.setDisplayMediaRequestHandler(async (_request, callback) => {
+  session.defaultSession.setDisplayMediaRequestHandler(async (request, callback) => {
     const sources = await desktopCapturer.getSources({ types: ['screen', 'window'] });
     let chosen = false;
     const menu = Menu.buildFromTemplate([
@@ -29,7 +29,7 @@ function createWindow() {
       { type: 'separator' },
       ...sources.map((src) => ({
         label: (src.id.startsWith('screen') ? 'Tela: ' : 'Janela: ') + src.name.slice(0, 60),
-        click: () => { chosen = true; callback({ video: src, audio: process.platform === 'win32' ? 'loopback' : undefined }); },
+        click: () => { chosen = true; callback({ video: src, audio: request.audioRequested && process.platform === 'win32' ? 'loopback' : undefined }); },
       })),
     ]);
     menu.popup({ window: win, callback: () => { if (!chosen) callback({}); } });
