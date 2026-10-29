@@ -1,14 +1,14 @@
 {
   "name": "resenha-desktop",
   "version": "1.0.0",
-  "description": "App de desktop do Resenha",
+  "description": "App de desktop do 7M Hub",
   "main": "main.js",
-  "author": "Resenha",
+  "author": "7M Hub",
   "scripts": { "start": "electron .", "build": "electron-builder" },
   "devDependencies": { "electron": "^33.0.0", "electron-builder": "^25.0.0" },
   "build": {
-    "appId": "com.resenha.app",
-    "productName": "Resenha",
+    "appId": "com.sevenmhub.app",
+    "productName": "7M Hub",
     "files": ["main.js", "config.json", "icon.png"],
     "win": { "target": "nsis", "icon": "icon.png" },
     "mac": { "target": "dmg", "icon": "icon.png" },

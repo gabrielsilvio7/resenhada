@@ -1,4 +1,4 @@
-// Janela do app: abre o seu servidor Resenha e cuida do seletor de tela.
+// Janela do app: abre o seu servidor 7M Hub e cuida do seletor de tela.
 const { app, BrowserWindow, session, desktopCapturer, Menu, shell } = require('electron');
 const fs = require('fs');
 const path = require('path');
@@ -13,7 +13,7 @@ function createWindow() {
   const url = getUrl();
   const win = new BrowserWindow({
     width: 1280, height: 800, minWidth: 800, minHeight: 560,
-    backgroundColor: '#14161f', title: 'Resenha', autoHideMenuBar: true,
+    backgroundColor: '#14161f', title: '7M Hub', autoHideMenuBar: true,
     icon: path.join(__dirname, 'icon.png'),
   });
 
@@ -40,7 +40,7 @@ function createWindow() {
   win.webContents.on('did-fail-load', (_e, code, desc, failedUrl, isMainFrame) => {
     if (!isMainFrame) return;
     const html = `<body style="font-family:sans-serif;background:#14161f;color:#e8eaf3;display:grid;place-items:center;height:100vh;margin:0">
-      <div style="max-width:420px"><h2>Não consegui abrir o Resenha</h2>
+      <div style="max-width:420px"><h2>Não consegui abrir o 7M Hub</h2>
       <p>Endereço: ${failedUrl}</p><p>${desc}. Confira se o servidor está ligado e se o endereço no config.json está certo.</p>
       <button onclick="location.href='${failedUrl}'" style="padding:10px 16px">Tentar de novo</button></div></body>`;
     win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));

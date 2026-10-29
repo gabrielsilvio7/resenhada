@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Resenha</title>
+<title>7M Hub</title>
 <link rel="manifest" href="/manifest.webmanifest">
 <meta name="theme-color" content="#14161f">
 <link rel="icon" href="/icon-192.png">
@@ -99,8 +99,8 @@ a.file{display:inline-block;margin-top:4px;background:var(--raise);padding:6px 1
 
 <div id="login">
   <form id="loginForm">
-    <h1>Resenha</h1>
-    <p>Call e transmissão de tela para a turma. Escolha um nome e entre.</p>
+    <h1>7M Hub</h1>
+    <p>Call e transmissão de tela pros cria. escolhe um nome ai.</p>
     <label id="avatarPick" title="Escolher foto"><img id="avatarImg" alt=""><span>Sua foto</span><input id="avatarFile" type="file" accept="image/*" hidden></label>
     <input id="nameInput" placeholder="Seu nome" maxlength="24" required autofocus>
     <button class="primary">Entrar</button>
@@ -109,14 +109,14 @@ a.file{display:inline-block;margin-top:4px;background:var(--raise);padding:6px 1
 
 <div id="app">
   <aside>
-    <h2>Canais de texto</h2>
+    <h2>Chats</h2>
     <div id="texts"></div>
     <h2>Canais de voz</h2>
     <div id="channels"></div>
   </aside>
 
   <main>
-    <div id="stage"><p id="empty">Você está sozinho aqui. Chame alguém para o mesmo canal ou comece a transmitir sua tela.</p></div>
+    <div id="stage"><p id="empty">Tem ninguem aqui só tu.</p></div>
     <div id="bar">
       <button id="btnMic">Microfone</button>
       <button id="btnDeaf">Áudio</button>
@@ -135,7 +135,7 @@ a.file{display:inline-block;margin-top:4px;background:var(--raise);padding:6px 1
 <div id="toast" role="alert"></div>
 
 <script>
-const CHANNELS = ['Geral', 'Jogos', 'Filmes', 'Estudo'];
+const CHANNELS = ['Canal', 'Canal-2', 'Canal-3', 'Canal-4'];
 const ICE = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }] };
 
 const $ = (id) => document.getElementById(id);
