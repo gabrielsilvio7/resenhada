@@ -1,0 +1,17 @@
+{
+  "name": "resenha-desktop",
+  "version": "1.0.0",
+  "description": "App de desktop do Resenha",
+  "main": "main.js",
+  "author": "Resenha",
+  "scripts": { "start": "electron .", "build": "electron-builder" },
+  "devDependencies": { "electron": "^33.0.0", "electron-builder": "^25.0.0" },
+  "build": {
+    "appId": "com.resenha.app",
+    "productName": "Resenha",
+    "files": ["main.js", "config.json", "icon.png"],
+    "win": { "target": "nsis", "icon": "icon.png" },
+    "mac": { "target": "dmg", "icon": "icon.png" },
+    "linux": { "target": "AppImage", "icon": "icon.png" }
+  }
+}

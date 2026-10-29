@@ -1,0 +1,8 @@
+services:
+  - type: web
+    name: resenha
+    runtime: node
+    rootDir: resenha
+    buildCommand: npm install
+    startCommand: npm start
+    plan: free

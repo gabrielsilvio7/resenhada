@@ -1,0 +1,53 @@
+// Janela do app: abre o seu servidor Resenha e cuida do seletor de tela.
+const { app, BrowserWindow, session, desktopCapturer, Menu, shell } = require('electron');
+const fs = require('fs');
+const path = require('path');
+
+function getUrl() {
+  if (process.env.RESENHA_URL) return process.env.RESENHA_URL;
+  try { return JSON.parse(fs.readFileSync(path.join(__dirname, 'config.json'), 'utf8')).url; }
+  catch { return 'http://localhost:3000'; }
+}
+
+function createWindow() {
+  const url = getUrl();
+  const win = new BrowserWindow({
+    width: 1280, height: 800, minWidth: 800, minHeight: 560,
+    backgroundColor: '#14161f', title: 'Resenha', autoHideMenuBar: true,
+    icon: path.join(__dirname, 'icon.png'),
+  });
+
+  // Libera microfone para o app.
+  session.defaultSession.setPermissionRequestHandler((_wc, permission, cb) => cb(['media', 'fullscreen'].includes(permission)));
+
+  // Seletor de tela/janela quando você clica em "Compartilhar tela".
+  session.defaultSession.setDisplayMediaRequestHandler(async (_request, callback) => {
+    const sources = await desktopCapturer.getSources({ types: ['screen', 'window'] });
+    let chosen = false;
+    const menu = Menu.buildFromTemplate([
+      { label: 'O que você quer compartilhar?', enabled: false },
+      { type: 'separator' },
+      ...sources.map((src) => ({
+        label: (src.id.startsWith('screen') ? 'Tela: ' : 'Janela: ') + src.name.slice(0, 60),
+        click: () => { chosen = true; callback({ video: src, audio: process.platform === 'win32' ? 'loopback' : undefined }); },
+      })),
+    ]);
+    menu.popup({ window: win, callback: () => { if (!chosen) callback({}); } });
+  });
+
+  win.webContents.setWindowOpenHandler(({ url: u }) => { shell.openExternal(u); return { action: 'deny' }; });
+
+  win.webContents.on('did-fail-load', (_e, code, desc, failedUrl, isMainFrame) => {
+    if (!isMainFrame) return;
+    const html = `<body style="font-family:sans-serif;background:#14161f;color:#e8eaf3;display:grid;place-items:center;height:100vh;margin:0">
+      <div style="max-width:420px"><h2>Não consegui abrir o Resenha</h2>
+      <p>Endereço: ${failedUrl}</p><p>${desc}. Confira se o servidor está ligado e se o endereço no config.json está certo.</p>
+      <button onclick="location.href='${failedUrl}'" style="padding:10px 16px">Tentar de novo</button></div></body>`;
+    win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
+  });
+
+  win.loadURL(url);
+}
+
+app.whenReady().then(createWindow);
+app.on('window-all-closed', () => app.quit());
