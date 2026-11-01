@@ -123,6 +123,7 @@ a.file{display:inline-block;margin-top:4px;background:var(--raise);padding:6px 1
       <button id="btnDeaf">Áudio</button>
       <button id="btnShare">Compartilhar tela</button>
       <label class="chk"><input type="checkbox" id="shareAudio" checked> Incluir som</label>
+      <label class="chk" id="winAudioLbl" style="display:none"><input type="checkbox" id="winAudio"> Só da janela (beta)</label>
       <button id="btnLeave" class="leave">Sair</button>
     </div>
   </main>
@@ -167,9 +168,11 @@ $('loginForm').onsubmit = async (e) => {
   applyNoise(); connect();
 };
 $('nameInput').value = localStorage.getItem('resenha:nome') || '';
-if (IN_APP && !window.hubAudio) {
-  $('shareAudio').checked = false; $('shareAudio').disabled = true;
-  $('shareAudio').parentElement.lastChild.textContent = ' Som (atualize o app)';
+// Opção beta (só no app): som apenas da janela transmitida, via módulo nativo do Windows.
+if (IN_APP && window.hubAudio) {
+  hubAudio.mode().then((m) => { if (m.native) $('winAudioLbl').style.display = 'flex'; }).catch(() => {});
+  $('winAudio').checked = localStorage.getItem('resenha:janela') === '1';
+  $('winAudio').onchange = () => localStorage.setItem('resenha:janela', $('winAudio').checked ? '1' : '0');
 }
 let myAvatar = localStorage.getItem('resenha:avatar') || '';
 function showAvatar() {
@@ -359,9 +362,10 @@ async function startAppAudio() {
     await ctx.audioWorklet.addModule(URL.createObjectURL(new Blob([code], { type: 'text/javascript' })));
     const node = new AudioWorkletNode(ctx, 'pcm-player', { numberOfInputs: 0, outputChannelCount: [2] });
     const dest = ctx.createMediaStreamDestination(); node.connect(dest);
-    hubAudio.onChunk((u8, meta) => { try { const f = toStereoFloat(u8, meta); if (f) node.port.postMessage(f, [f.buffer]); } catch {} });
+    let count = 0;
+    hubAudio.onChunk((u8, meta) => { count++; try { const f = toStereoFloat(u8, meta); if (f) node.port.postMessage(f, [f.buffer]); } catch {} });
     hubAudio.onStatus((m) => toast('Transmitindo sem som: ' + m));
-    return { track: dest.stream.getAudioTracks()[0], close: () => { hubAudio.stop(); hubAudio.onChunk(null); ctx.close(); } };
+    return { get count() { return count; }, track: dest.stream.getAudioTracks()[0], close: () => { hubAudio.stop(); hubAudio.onChunk(null); ctx.close(); } };
   } catch { toast('Não consegui preparar o som da transmissão.'); return null; }
 }
 function controls(tile, onVol) {
@@ -448,14 +452,18 @@ $('btnShare').onclick = async () => {
   if (!navigator.mediaDevices?.getDisplayMedia) return toast('Seu navegador não permite compartilhar tela (precisa de HTTPS).');
   let appAudio = null;
   try {
-    const wantAudio = $('shareAudio').checked && !$('shareAudio').disabled;
-    if (IN_APP && window.hubAudio) { hubAudio.setWant(wantAudio); if (wantAudio) appAudio = await startAppAudio(); }
+    const wantAudio = $('shareAudio').checked;
+    const useNative = IN_APP && !!window.hubAudio && $('winAudioLbl').style.display !== 'none' && $('winAudio').checked;
+    if (IN_APP && window.hubAudio) { hubAudio.setWant(wantAudio, useNative); if (wantAudio && useNative) appAudio = await startAppAudio(); }
     // Janela: só o som daquela janela. Tela inteira: som do computador.
     screenStream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 30 },
-      audio: !IN_APP && wantAudio && { echoCancellation: true, noiseSuppression: false, autoGainControl: false, restrictOwnAudio: true },
+      audio: wantAudio && !useNative && { echoCancellation: true, noiseSuppression: false, autoGainControl: false, restrictOwnAudio: true },
       windowAudio: 'window', systemAudio: 'include' });
   } catch { appAudio?.close(); return; }
-  if (appAudio) { screenStream.addTrack(appAudio.track); screenStream.appAudio = appAudio; }
+  if (appAudio) {
+    screenStream.addTrack(appAudio.track); screenStream.appAudio = appAudio;
+    setTimeout(() => { if (screenStream && appAudio.count === 0) toast('Nenhum som chegou do módulo ainda (normal se nada estiver tocando).'); }, 4000);
+  }
   screenStream.getVideoTracks()[0].onended = stopShare;
   peers.forEach(addScreenTo);
   const tile = document.createElement('div'); tile.className = 'tile'; tile.id = 'localShare';
