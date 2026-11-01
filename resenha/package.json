@@ -4,5 +4,5 @@
   "description": "Chamada de voz e compartilhamento de tela para amigos (WebRTC)",
   "main": "server.js",
   "scripts": { "start": "node server.js" },
-  "dependencies": { "express": "^4.19.2", "ws": "^8.18.0" }
+  "dependencies": { "@sapphi-red/web-noise-suppressor": "0.3.5", "express": "^4.19.2", "ws": "^8.18.0" }
 }

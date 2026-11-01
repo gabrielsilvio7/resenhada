@@ -3,8 +3,14 @@
 const express = require('express');
 const http = require('http');
 const { WebSocketServer } = require('ws');
+const path = require('path');
+const { noiseManifest } = require('./noise-assets');
 
 const app = express();
+// Supressão de ruído por IA (RNNoise): arquivos do pacote npm servidos pelo próprio servidor.
+const NOISE_DIR = path.join(__dirname, 'node_modules', '@sapphi-red', 'web-noise-suppressor');
+app.get('/vendor/noise/manifest.json', (_req, res) => res.json(noiseManifest(NOISE_DIR, '/vendor/noise')));
+app.use('/vendor/noise', express.static(NOISE_DIR, { maxAge: '7d' }));
 app.use(express.static('public'));
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server, maxPayload: 10 * 1024 * 1024 });
