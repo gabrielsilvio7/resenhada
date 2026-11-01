@@ -6,7 +6,8 @@ ipcRenderer.on('audio-chunk', (_e, buf, meta) => onChunk && onChunk(buf, meta));
 ipcRenderer.on('audio-status', (_e, msg) => onStatus && onStatus(msg));
 
 contextBridge.exposeInMainWorld('hubAudio', {
-  setWant: (v) => ipcRenderer.send('audio-want', !!v),
+  mode: () => ipcRenderer.invoke('audio-mode'),
+  setWant: (want, native) => ipcRenderer.send('audio-want', !!want, !!native),
   onChunk: (cb) => { onChunk = cb; },
   onStatus: (cb) => { onStatus = cb; },
   stop: () => ipcRenderer.send('audio-stop'),

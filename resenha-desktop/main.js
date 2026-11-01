@@ -11,8 +11,9 @@ try {
   if (!capture.isAvailable()) capture = null;
 } catch { capture = null; }
 
-let wantAudio = false, capturing = false;
-ipcMain.on('audio-want', (_e, v) => { wantAudio = !!v; });
+let wantAudio = false, useNative = false, capturing = false;
+ipcMain.handle('audio-mode', () => ({ native: !!capture && process.platform === 'win32' }));
+ipcMain.on('audio-want', (_e, want, native) => { wantAudio = !!want; useNative = !!native; });
 ipcMain.on('audio-stop', () => stopAudio());
 
 function stopAudio() {
@@ -23,7 +24,7 @@ function stopAudio() {
 
 function startAudio(win, src) {
   stopAudio();
-  if (!wantAudio) return;
+  if (!wantAudio || !useNative) return;
   const status = (m) => !win.isDestroyed() && win.webContents.send('audio-status', m);
   if (process.platform !== 'win32' || !capture) return status('módulo de som não carregou');
   try {
@@ -62,7 +63,7 @@ function createWindow() {
   session.defaultSession.setPermissionRequestHandler((_wc, permission, cb) => cb(['media', 'fullscreen'].includes(permission)));
 
   // Seletor de tela/janela quando você clica em "Compartilhar tela".
-  // O som não vem daqui: vem do módulo nativo (startAudio).
+  // Padrão: som do sistema ('loopback'), como antes. Opção beta: módulo nativo por janela (startAudio).
   session.defaultSession.setDisplayMediaRequestHandler(async (_request, callback) => {
     const sources = await desktopCapturer.getSources({ types: ['screen', 'window'] });
     let chosen = false;
@@ -71,7 +72,11 @@ function createWindow() {
       { type: 'separator' },
       ...sources.map((src) => ({
         label: (src.id.startsWith('screen') ? 'Tela: ' : 'Janela: ') + src.name.slice(0, 60),
-        click: () => { chosen = true; startAudio(win, src); callback({ video: src }); },
+        click: () => {
+          chosen = true; startAudio(win, src);
+          const loop = wantAudio && !useNative && process.platform === 'win32';
+          callback(loop ? { video: src, audio: 'loopback' } : { video: src });
+        },
       })),
     ]);
     menu.popup({ window: win, callback: () => { if (!chosen) callback({}); } });
