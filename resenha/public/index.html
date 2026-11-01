@@ -162,9 +162,7 @@ $('loginForm').onsubmit = async (e) => {
   localStorage.setItem('resenha:nome', myName); localStorage.setItem('resenha:avatar', myAvatar);
   $('login').style.display = 'none'; $('app').classList.add('on');
   audioCtx ||= new AudioContext(); audioCtx.resume();
-  try {
-    micStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
-  } catch { toast('Sem acesso ao microfone. Você vai só ouvir.'); }
+  await setupMic();
   applyNoise(); connect();
 };
 $('nameInput').value = localStorage.getItem('resenha:nome') || '';
@@ -427,11 +425,61 @@ function watchSpeaking(p, stream, isMe) {
 
 /* ---------- controles ---------- */
 let noiseOn = localStorage.getItem('resenha:ruido') !== '0';
-async function applyNoise() {
-  $('btnNoise').textContent = noiseOn ? 'Ruído: cancelado' : 'Ruído: normal';
-  $('btnNoise').classList.toggle('live', noiseOn);
+
+/* Microfone com supressão de ruído por IA (RNNoise, roda no seu PC).
+   Se algo falhar, cai no plano B: o cancelamento de ruído do próprio navegador. */
+let rawMic = null, rnn = null;
+const NOISE_CDN = 'https://cdn.jsdelivr.net/npm/@sapphi-red/web-noise-suppressor@0.3.5/+esm';
+const withTimeout = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('demorou demais')), ms))]);
+
+async function loadNoiseLib() {
+  const m = await (await fetch('/vendor/noise/manifest.json')).json();
+  if (!m.ok) throw new Error('arquivos do RNNoise não encontrados no servidor');
+  let lib;
+  try { lib = await import(m.main); } catch { lib = await import(NOISE_CDN); }
+  if (!lib.RnnoiseWorkletNode || !lib.loadRnnoise) throw new Error('biblioteca sem RnnoiseWorkletNode');
+  return { lib, m };
+}
+
+async function setupMic() {
+  const ctx = new AudioContext({ sampleRate: 48000, latencyHint: 'interactive' }); ctx.resume?.();
   try {
-    await micStream?.getAudioTracks()[0]?.applyConstraints({ noiseSuppression: noiseOn, echoCancellation: true, autoGainControl: true, voiceIsolation: noiseOn });
+    rawMic = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: false, autoGainControl: true } });
+  } catch { toast('Sem acesso ao microfone. Você vai só ouvir.'); ctx.close(); return; }
+  micStream = rawMic; // plano B
+  try {
+    const node = await withTimeout((async () => {
+      const { lib, m } = await loadNoiseLib();
+      await ctx.audioWorklet.addModule(m.worklet);
+      const wasmBinary = await lib.loadRnnoise({ url: m.wasm, simdUrl: m.simd || m.wasm });
+      return new lib.RnnoiseWorkletNode(ctx, { wasmBinary, maxChannels: 1 });
+    })(), 10000);
+    const source = ctx.createMediaStreamSource(rawMic);
+    const dest = ctx.createMediaStreamDestination();
+    rnn = { ctx, source, node, dest };
+    micStream = dest.stream;
+    routeMic();
+    console.info('[ruído] RNNoise ativo');
+  } catch (e) {
+    rnn = null; micStream = rawMic; ctx.close();
+    console.warn('[ruído] usando o cancelamento do navegador:', e.message || e);
+  }
+}
+
+// Liga/desliga o RNNoise sem trocar a faixa de áudio enviada aos amigos.
+function routeMic() {
+  if (!rnn) return;
+  rnn.source.disconnect(); rnn.node.disconnect();
+  if (noiseOn) { rnn.source.connect(rnn.node); rnn.node.connect(rnn.dest); }
+  else rnn.source.connect(rnn.dest);
+}
+
+async function applyNoise() {
+  $('btnNoise').textContent = noiseOn ? (rnn ? 'Ruído: cancelado (IA)' : 'Ruído: cancelado') : 'Ruído: normal';
+  $('btnNoise').classList.toggle('live', noiseOn);
+  if (rnn) return routeMic();
+  try {
+    await rawMic?.getAudioTracks()[0]?.applyConstraints({ noiseSuppression: noiseOn, echoCancellation: true, autoGainControl: true, voiceIsolation: noiseOn });
   } catch {}
 }
 $('btnNoise').onclick = () => { noiseOn = !noiseOn; localStorage.setItem('resenha:ruido', noiseOn ? '1' : '0'); applyNoise(); };
@@ -445,7 +493,7 @@ $('btnDeaf').onclick = () => {
   peers.forEach((p) => p.tiles.forEach((t) => (t.querySelector('video').muted = deafened)));
   $('btnDeaf').classList.toggle('off', deafened); $('btnDeaf').textContent = deafened ? 'Áudio desligado' : 'Áudio';
 };
-$('btnLeave').onclick = () => { ws.onclose = null; ws.close(); stopShare(); micStream?.getTracks().forEach((t) => t.stop()); location.reload(); };
+$('btnLeave').onclick = () => { ws.onclose = null; ws.close(); stopShare(); micStream?.getTracks().forEach((t) => t.stop()); rawMic?.getTracks().forEach((t) => t.stop()); rnn?.ctx.close(); location.reload(); };
 
 $('btnShare').onclick = async () => {
   if (screenStream) return stopShare();
