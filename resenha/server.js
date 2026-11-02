@@ -13,7 +13,7 @@ app.get('/vendor/noise/manifest.json', (_req, res) => res.json(noiseManifest(NOI
 app.use('/vendor/noise', express.static(NOISE_DIR, { maxAge: '7d' }));
 app.use(express.static('public'));
 const server = http.createServer(app);
-const wss = new WebSocketServer({ server, maxPayload: 10 * 1024 * 1024 });
+const wss = new WebSocketServer({ server, maxPayload: 16 * 1024 * 1024 });
 
 const rooms = new Map(); // sala -> Map(id -> ws)
 let nextId = 1;
@@ -23,6 +23,29 @@ const TEXTS = ['geral', 'memes', 'jogos', 'estudo'];
 const history = new Map(TEXTS.map((c) => [c, []]));
 const MAX_FILES = 4; // anexos mantidos por canal
 
+// Histórico gravado em arquivo (HISTORY_FILE). Só sobrevive a reinícios se o servidor tiver disco permanente.
+const fs = require('fs');
+const HIST_FILE = process.env.HISTORY_FILE || path.join(__dirname, 'data', 'history.json');
+try {
+  const d = JSON.parse(fs.readFileSync(HIST_FILE, 'utf8'));
+  for (const c of TEXTS) if (Array.isArray(d[c])) history.set(c, d[c]);
+} catch {}
+let saveTimer;
+function saveHistory() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    try {
+      fs.mkdirSync(path.dirname(HIST_FILE), { recursive: true });
+      fs.writeFileSync(HIST_FILE + '.tmp', JSON.stringify(Object.fromEntries(history)));
+      fs.renameSync(HIST_FILE + '.tmp', HIST_FILE);
+    } catch (e) { console.error('histórico não gravado:', e.message); }
+  }, 3000);
+}
+function setProfile(ws, m) {
+  ws.name = String(m.name || 'Anônimo').slice(0, 24);
+  ws.avatar = typeof m.avatar === 'string' && m.avatar.startsWith('data:image/') && m.avatar.length < 30000 ? m.avatar : '';
+}
+
 const send = (ws, msg) => ws.readyState === 1 && ws.send(JSON.stringify(msg));
 const broadcast = (room, msg, exceptId) =>
   rooms.get(room)?.forEach((p) => p.id !== exceptId && send(p, msg));
@@ -31,7 +54,8 @@ const broadcast = (room, msg, exceptId) =>
 function presence() {
   const out = {};
   rooms.forEach((m, r) => (out[r] = [...m.values()].map((p) => ({ id: p.id, name: p.name, avatar: p.avatar }))));
-  const msg = JSON.stringify({ type: 'presence', rooms: out });
+  const online = [...wss.clients].filter((c) => c.readyState === 1 && c.name).map((c) => ({ id: c.id, name: c.name, avatar: c.avatar, room: c.room }));
+  const msg = JSON.stringify({ type: 'presence', rooms: out, online });
   wss.clients.forEach((c) => c.readyState === 1 && c.send(msg));
 }
 
@@ -53,11 +77,14 @@ wss.on('connection', (ws) => {
     let m;
     try { m = JSON.parse(raw); } catch { return; }
 
-    if (m.type === 'join') {
+    if (m.type === 'hello') {
+      setProfile(ws, m); send(ws, { type: 'me', id: ws.id }); presence();
+    } else if (m.type === 'leave-voice') {
+      leave(ws); presence();
+    } else if (m.type === 'join') {
       leave(ws);
       ws.room = String(m.room || 'geral').slice(0, 32);
-      ws.name = String(m.name || 'Anônimo').slice(0, 24);
-      ws.avatar = typeof m.avatar === 'string' && m.avatar.startsWith('data:image/') && m.avatar.length < 30000 ? m.avatar : '';
+      setProfile(ws, m);
       if (!rooms.has(ws.room)) rooms.set(ws.room, new Map());
       const room = rooms.get(ws.room);
       const peers = [...room.values()].map((p) => ({ id: p.id, name: p.name, avatar: p.avatar }));
@@ -73,7 +100,7 @@ wss.on('connection', (ws) => {
     } else if (m.type === 'text' && history.has(m.channel)) {
       const msg = { name: ws.name || 'Anônimo', avatar: ws.avatar || '', ts: Date.now(), text: String(m.text || '').slice(0, 1000) };
       const f = m.file;
-      if (f && typeof f.data === 'string' && f.data.startsWith('data:') && f.data.length < 7200000) {
+      if (f && typeof f.data === 'string' && f.data.startsWith('data:') && f.data.length < 14000000) {
         msg.file = { name: String(f.name || 'arquivo').slice(0, 100), type: String(f.type || 'application/octet-stream').slice(0, 100), data: f.data };
       }
       if (!msg.text && !msg.file) return;
@@ -85,6 +112,7 @@ wss.on('connection', (ws) => {
         const old = withFiles.shift();
         old.file = { name: old.file.name, type: old.file.type, expired: true };
       }
+      saveHistory();
       const out = JSON.stringify({ type: 'text', channel: m.channel, msg });
       wss.clients.forEach((c) => c.readyState === 1 && c.send(out));
     }
